@@ -27,6 +27,8 @@
 #include "descartes_planner/ladder_graph_dag_search.h"
 #include "descartes_planner/planning_graph_edge_policy.h"
 #include <ros/console.h>
+#include <ros/ros.h>
+#include <sstream>
 
 using namespace descartes_core;
 using namespace descartes_trajectory;
@@ -48,14 +50,22 @@ bool PlanningGraph::insertGraph(const std::vector<TrajectoryPtPtr>& points)
 
   if (graph_.size() > 0) clear();
 
+  // Added: Overall planning start
+  ROS_INFO("=== DESCARTES PLANNING GRAPH: Starting trajectory planning ===");
+  ROS_INFO("Total waypoints to process: %zu", points.size());
+  ros::Time planning_start = ros::Time::now();
+
   // generate solutions for this point
   std::vector<std::vector<std::vector<double>>> all_joint_sols;
   if (!calculateJointSolutions(points.data(), points.size(), all_joint_sols))
   {
+    ros::Duration planning_time = ros::Time::now() - planning_start;
+    ROS_ERROR("Planning failed during IK solution generation (%.3f seconds)", planning_time.toSec());
     return false;
   }
 
   // insert into graph as vertices
+  ROS_INFO("Building planning graph vertices...");
   graph_.resize(points.size());
   for (std::size_t i = 0; i < points.size(); ++i)
   {
@@ -63,11 +73,20 @@ bool PlanningGraph::insertGraph(const std::vector<TrajectoryPtPtr>& points)
   }
 
   // now we have a graph with data in the 'rungs' and we need to compute the edges
+  ROS_INFO("Computing edges between waypoints...");
+  ros::Time edge_start = ros::Time::now();
+  
   #pragma omp parallel for
   for (std::size_t i = 0; i < graph_.size() - 1; ++i)
   {
     computeAndAssignEdges(i, i + 1);
   }
+  
+  ros::Duration edge_time = ros::Time::now() - edge_start;
+  ros::Duration total_time = ros::Time::now() - planning_start;
+  
+  ROS_INFO("Edge computation completed in %.3f seconds", edge_time.toSec());
+  ROS_INFO("=== DESCARTES PLANNING GRAPH: Graph construction completed in %.3f seconds ===", total_time.toSec());
 
   return true;
 }
@@ -189,22 +208,58 @@ bool PlanningGraph::calculateJointSolutions(const TrajectoryPtPtr* points, const
   poses.resize(count);
   bool success = true;
 
+  // Added: Progress tracking for waypoint processing
+  ROS_INFO("=== DESCARTES PLANNING GRAPH: Processing %zu waypoints ===", count);
+  ros::Time overall_start = ros::Time::now();
+
   #pragma omp parallel for shared(success)
   for (std::size_t i = 0; i < count; ++i)
   {
     if (success)
     {
+      ros::Time waypoint_start = ros::Time::now();
+      
+      // Added: Log which waypoint we're processing
+      const auto& point = points[i];
+      std::stringstream id_str;
+      id_str << point->getID();
+      ROS_INFO("Waypoint %zu/%zu: Starting IK search (%s)", 
+               i+1, count, id_str.str().c_str());
+      
       std::vector<std::vector<double>> joint_poses;
       points[i]->getJointPoses(*robot_model_, joint_poses);
 
+      ros::Duration waypoint_time = ros::Time::now() - waypoint_start;
+      
       if (joint_poses.empty())
       {
         ROS_ERROR_STREAM(__FUNCTION__ << ": IK failed for input trajectory point with ID = " << points[i]->getID());
+        ROS_ERROR("  ✗ Waypoint %zu/%zu: FAILED - No IK solutions found (%.3fs)",
+                  i+1, count, waypoint_time.toSec());
         success = false;
+      }
+      else
+      {
+        // Added: Success logging with solution count
+        ROS_INFO("  ✓ Waypoint %zu/%zu: Found %zu IK solutions (%.3fs)",
+                 i+1, count, joint_poses.size(), waypoint_time.toSec());
       }
 
       poses[i] = std::move(joint_poses);
     }
+  }
+
+  // Added: Overall timing summary
+  ros::Duration total_time = ros::Time::now() - overall_start;
+  if (success)
+  {
+    ROS_INFO("=== DESCARTES PLANNING GRAPH: Successfully processed all %zu waypoints in %.3f seconds ===",
+             count, total_time.toSec());
+  }
+  else
+  {
+    ROS_ERROR("=== DESCARTES PLANNING GRAPH: Failed to process all waypoints (%.3f seconds) ===",
+              total_time.toSec());
   }
 
   return success;

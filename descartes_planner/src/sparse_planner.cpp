@@ -57,7 +57,7 @@ descartes_core::TimingConstraint cumulativeTimingBetween(
 namespace descartes_planner
 {
 const int INVALID_INDEX = -1;
-const double MAX_JOINT_CHANGE = M_PI_4;
+const double MAX_JOINT_CHANGE = M_PI_4 * 1.5;  // 67.5 degrees instead of 45
 const double DEFAULT_SAMPLING = 0.1f;
 const std::string SAMPLING_CONFIG = "sampling";
 

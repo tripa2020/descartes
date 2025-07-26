@@ -12,6 +12,8 @@ find_package(catkin REQUIRED COMPONENTS
   pluginlib
   rosconsole_bridge
   tf
+  tf_conversions
+  eigen_conversions
 )
 
 find_package(Boost REQUIRED)
